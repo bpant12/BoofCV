@@ -35,6 +35,7 @@ import lombok.Setter;
 import org.ddogleg.fitting.modelset.ransac.Ransac;
 import org.ddogleg.struct.FastQueue;
 
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -72,6 +73,9 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	/** Sets if tracking is turned on or not */
 	@Getter @Setter boolean tracking = true;
 
+	/** Print tracking and debugging messages */
+	private @Getter @Setter PrintStream verbose = null;
+
 	// Storage for the centers of observed ellipses
 	List<Point2D_F64> detectedPoints = new ArrayList<>();
 	// Storage for documents which have been lookd up
@@ -82,7 +86,7 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	// Look up table that goes from global ID to Track
 	TIntObjectHashMap<Track> globalId_to_track = new TIntObjectHashMap<>();
 	// Lookup table from track ID to global ID
-	TIntIntHashMap track_to_global_ID = new TIntIntHashMap();
+	TIntIntHashMap trackId_to_globalId = new TIntIntHashMap();
 	// LLAH dictionary for tracks in the previous frame
 	LlahOperations llahTrackingOps;
 
@@ -110,7 +114,7 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	 */
 	public void reset() {
 		llahTrackingOps.clearDocuments();
-		track_to_global_ID.clear();
+		trackId_to_globalId.clear();
 	}
 
 	/**
@@ -130,9 +134,11 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 			detectedPoints.add(foundEllipses.get(i).ellipse.center);
 		}
 
+		if( verbose != null ) verbose.println("Uchiya detected dots total "+detectedPoints.size());
+
 		performTracking(detectedPoints);
 		performDetection(detectedPoints);
-		updateTrackDescriptions();
+		setTrackDescriptionsAndID();
 
 		// System.out.println("Found documents "+foundDocs.size());
 //		for( var r : foundDocs ) {
@@ -155,11 +161,15 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 		for( int i = 0; i < foundDocs.size(); i++ ) {
 			LlahOperations.FoundDocument foundTrackDoc = foundDocs.get(i);
 			Track track = currentTracks.grow();
+			track.reset();
 			if( fitHomographAndPredict(observations,foundTrackDoc,track) ) {
 				// convert from track doc to dictionary doc ID
-				int globalID = track_to_global_ID.get(foundTrackDoc.document.documentID);
+				int globalID = trackId_to_globalId.get(foundTrackDoc.document.documentID);
+				track.globalDoc = llahOps.getDocuments().get(globalID);
 				globalId_to_track.put(globalID,track);
+				if( verbose != null ) verbose.println(" tracked doc "+globalID);
 			} else {
+				if( verbose != null ) verbose.println(" failed to fit homography while tracking");
 				currentTracks.removeTail();
 			}
 		}
@@ -174,12 +184,16 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 
 		// save the observations, but ignore previously detected markers
 		for( int i = 0; i < foundDocs.size(); i++ ) {
-			LlahOperations.FoundDocument f = foundDocs.get(i);
-			if( globalId_to_track.containsKey(f.document.documentID))
+			LlahOperations.FoundDocument foundDoc = foundDocs.get(i);
+			if( globalId_to_track.containsKey(foundDoc.document.documentID))
 				continue;
+
 			Track track = currentTracks.grow();
-			if( fitHomographAndPredict(observations,foundDocs.get(i),track) ) {
-				globalId_to_track.put(track.document.documentID,track);
+			track.reset();
+			if( fitHomographAndPredict(observations,foundDoc,track) ) {
+				track.globalDoc = foundDoc.document;
+				globalId_to_track.put(track.globalDoc.documentID,track);
+				if( verbose != null ) verbose.println(" detected doc "+track.globalDoc.documentID);
 			} else {
 				currentTracks.removeTail();
 			}
@@ -189,13 +203,13 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	/**
 	 * Updates the track descriptions based on the most recent predicted observations
 	 */
-	private void updateTrackDescriptions() {
+	private void setTrackDescriptionsAndID() {
 		// Compute new definitions for all tracks
 		llahTrackingOps.clearDocuments();
-		track_to_global_ID.clear();
+		trackId_to_globalId.clear();
 		globalId_to_track.forEachEntry((globalID, track)-> {
-			LlahDocument trackDoc = llahTrackingOps.createDocument(track.predicted.toList());
-			track_to_global_ID.put(trackDoc.documentID,globalID);
+			track.trackDoc = llahTrackingOps.createDocument(track.predicted.toList());
+			trackId_to_globalId.put(track.trackDoc.documentID,globalID);
 			return true;
 		});
 	}
@@ -213,7 +227,6 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 			return false;
 
 		// Use the homography to estimate where the landmarks would have appeared
-		track.document = doc.document;
 		track.doc_to_imagePixel.set(ransac.getModelParameters());
 		track.predicted.resize(doc.document.landmarks.size);
 
@@ -258,7 +271,9 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	public static class Track
 	{
 		/** Reference to Tracking document */
-		public LlahDocument document;
+		public LlahDocument trackDoc;
+		/** Reference to the global document */
+		public LlahDocument globalDoc;
 		/** Found homography from landmark to image pixels */
 		public final Homography2D_F64 doc_to_imagePixel = new Homography2D_F64();
 		/** The location of each landmark predicted using the homography */
@@ -266,7 +281,8 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 
 		/** Resets to initial state */
 		public void reset() {
-			document=null;
+			trackDoc=null;
+			globalDoc =null;
 			predicted.reset();
 			doc_to_imagePixel.reset();
 		}

@@ -45,7 +45,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Peter Abeles
@@ -89,7 +90,7 @@ class TestUchiyaMarkerTracker {
 		FastQueue<UchiyaMarkerTracker.Track> tracks = tracker.getCurrentTracks();
 		assertEquals(1,tracks.size);
 		UchiyaMarkerTracker.Track t = tracks.get(0);
-		assertEquals(targetID, t.document.documentID);
+		assertEquals(targetID, t.globalDoc.documentID);
 	}
 
 	/**
@@ -112,8 +113,10 @@ class TestUchiyaMarkerTracker {
 			tracker.llahOps.createDocument(doc);
 		}
 
+		var prevMean = new Point2D_F64();
+		var currMean = new Point2D_F64();
+
 		for (int frame = 0; frame < 10; frame++) {
-			System.out.println("frame = "+frame);
 			new FDistort(generator.getImage(), image).affine(1,0,0,1,frame*5,frame).border(255).apply();
 
 //			ShowImages.showWindow(image,"Stuff");
@@ -124,24 +127,15 @@ class TestUchiyaMarkerTracker {
 			FastQueue<UchiyaMarkerTracker.Track> tracks = tracker.getCurrentTracks();
 			assertEquals(1,tracks.size);
 			UchiyaMarkerTracker.Track t = tracks.get(0);
-			assertEquals(targetID, t.document.documentID);
+			assertEquals(targetID, t.globalDoc.documentID);
 
-			// TODO see if the track has moved
+			// Make sure the track is moving in the expected way
+			UtilPoint2D_F64.mean(t.predicted.toList(),currMean);
+			if( frame > 0 ) {
+				assertEquals(5.0,currMean.x-prevMean.x, 0.5);
+			}
+			prevMean.set(currMean);
 		}
-	}
-
-	/**
-	 * A more challenging sequence in which the image will undergo enough affine distortion that detection will
-	 * break down
-	 */
-	@Test
-	void sequence_Affine() {
-		fail("Implement");
-	}
-
-	@Test
-	void performTracking() {
-		fail("Implement");
 	}
 
 	@Test
@@ -168,8 +162,8 @@ class TestUchiyaMarkerTracker {
 
 		// check to see if the predicted landmark locations are correct
 		for( var track : tracker.currentTracks.toList() ) {
-			List<Point2D_F64> docObs = documents.get(track.document.documentID);
-			double offset = track.document.documentID*500;
+			List<Point2D_F64> docObs = documents.get(track.globalDoc.documentID);
+			double offset = track.globalDoc.documentID*500;
 
 			for (int i = 0; i < track.predicted.size; i++) {
 				double expectedX = docObs.get(i).x + offset;
