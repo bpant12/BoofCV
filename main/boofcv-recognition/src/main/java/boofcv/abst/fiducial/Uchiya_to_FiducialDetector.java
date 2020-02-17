@@ -161,6 +161,7 @@ implements FiducialTracker<T>
 		UchiyaMarkerTracker.Track track = tracker.getTracks().get(which);
 		controlPoints.reset();
 		for (int idx = 0; idx < track.predicted.size; idx++) {
+			// TODO use actual observations
 			Point2D_F64 dot = track.predicted.get(idx);
 			controlPoints.grow().set(dot.x, dot.y, idx);
 		}
@@ -171,9 +172,15 @@ implements FiducialTracker<T>
 	protected List<Point2D3D> getControl3D(int which) {
 		UchiyaMarkerTracker.Track track = tracker.getTracks().get(which);
 		control3D.reset();
+		Point2D_F64 norm = new Point2D_F64();
 		for (int idx = 0; idx < track.globalDoc.landmarks.size; idx++) {
-			Point2D_F64 p = track.globalDoc.landmarks.get(idx);
-			control3D.grow().set(p.x,p.y,p.x,p.y,0);
+			// TODO use actual observations
+			Point2D_F64 dot = track.predicted.get(idx);
+			Point2D_F64 landmark = track.globalDoc.landmarks.get(idx);
+
+			pixelToNorm.compute(dot.x,dot.y, norm);
+
+			control3D.grow().set(norm.x,norm.y,landmark.x,landmark.y,0);
 		}
 		return control3D.toList();
 	}

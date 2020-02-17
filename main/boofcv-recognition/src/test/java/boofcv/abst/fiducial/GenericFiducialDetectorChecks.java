@@ -23,7 +23,6 @@ import boofcv.alg.distort.brown.LensDistortionBrown;
 import boofcv.alg.geo.PerspectiveOps;
 import boofcv.alg.geo.WorldToCameraToPixel;
 import boofcv.core.image.GConvertImage;
-import boofcv.gui.image.ShowImages;
 import boofcv.simulation.SimulatePlanarWorld;
 import boofcv.struct.calib.CameraPinholeBrown;
 import boofcv.struct.image.GrayF32;
@@ -220,7 +219,7 @@ public abstract class GenericFiducialDetectorChecks {
 				detector.setLensDistortion(lensDistorted, imageD.width, imageD.height);
 				detect(detector,imageD);
 
-				ShowImages.showBlocking(imageD,"Distorted", 2_000);
+//				ShowImages.showBlocking(imageD,"Distorted", 2_000);
 
 				assertEquals(1, detector.totalFound());
 

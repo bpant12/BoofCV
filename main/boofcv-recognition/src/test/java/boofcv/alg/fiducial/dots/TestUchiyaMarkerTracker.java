@@ -180,10 +180,8 @@ class TestUchiyaMarkerTracker {
 
 
 		for (int i = 0; i < landmarks.size(); i++) {
-			LlahOperations.DotCount count = new LlahOperations.DotCount();
-			count.counts = 1000;
-			count.dotIdx = dotsShuffled.indexOf(dots.get(i));
-			observed.landmarkToDots.get(i).put(i,count);
+			observed.landmarkHits.data[i] = 1000;
+			observed.landmarkToDots.data[i] = dotsShuffled.indexOf(dots.get(i));
 		}
 
 		UchiyaMarkerTracker alg = createTracker();

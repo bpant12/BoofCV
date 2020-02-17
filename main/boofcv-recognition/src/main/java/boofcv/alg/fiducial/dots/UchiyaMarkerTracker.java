@@ -81,7 +81,6 @@ public class UchiyaMarkerTracker {
 	// Used to compute homography
 	Ransac<Homography2D_F64, AssociatedPair> ransac;
 	FastQueue<AssociatedPair> ransacPairs = new FastQueue<>(AssociatedPair::new); // landmark -> dots
-	LlahOperations.DotCount bestDot; // used to keep track of which dot had the most counts for the landmark
 
 	/**
 	 * Configures the tracker
@@ -222,20 +221,10 @@ public class UchiyaMarkerTracker {
 		ransacPairs.reset();
 		for (int landmarkIdx = 0; landmarkIdx < observed.document.landmarks.size; landmarkIdx++) {
 			final Point2D_F64 landmark = observed.document.landmarks.get(landmarkIdx);
-			bestDot = null;
-			TIntObjectHashMap<LlahOperations.DotCount> dotToLandmark = observed.landmarkToDots.get(landmarkIdx);
-			dotToLandmark.forEachEntry((key,dotCount)-> {
-				if( bestDot == null || dotCount.counts > bestDot.counts) {
-					bestDot = dotCount;
-				}
-//				System.out.println("   landmark "+moo+" dot "+dotCount.dotIdx+"  count "+dotCount.counts);
-				return true;
-			});
-
-			if( bestDot != null && bestDot.counts >= minDotHits ) {
-//				System.out.println("selected landmark "+landmarkIdx+"  count "+bestDot.counts);
-				ransacPairs.grow().set(landmark,dots.get(bestDot.dotIdx));
-			}
+			int dotIdx = observed.landmarkToDots.get(landmarkIdx);
+			if( dotIdx < 0 )
+				continue;
+			ransacPairs.grow().set(landmark,dots.get(dotIdx));
 		}
 		if( ransacPairs.size < ransac.getMinimumSize() )
 			return false;

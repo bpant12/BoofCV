@@ -293,29 +293,43 @@ public class LlahOperations {
 		resultsStorage.reset();
 
 		// Used to keep track of what has been seen and what has not been seen
+		FastQueue<DotVotingBooth> votingBooths = new FastQueue<>(DotVotingBooth::new);
+		votingBooths.resize(dots.size());
+
 		var featureComputed = new LlahFeature(numberOfInvariants);
 
 		// Compute features, look up matching known features, then vote
 		computeAllFeatures(dots, (dotIdx,pointSet)->
-				lookupProcessor(foundMap, featureComputed,pointSet,dotIdx));
+				lookupProcessor(pointSet,dotIdx, featureComputed, votingBooths));
 
-		int minimumHits = (int)Math.round(computeMaxUniqueHashPerPoint()*threshold);
-		foundMap.forEachEntry((docID,foundDoc)->{
-			int totalValid = 0;
-			for (int i = 0; i < foundDoc.landmarkHits.size; i++) {
-				// Skip if the point was not found
-				if( !foundDoc.seenLandmark(i) )
-					continue;
-
-				if( foundDoc.landmarkHits.data[i] >= minimumHits ) {
-					totalValid++;
-				} else {
-					// mark it as not seen if below the threshold
-					foundDoc.landmarkHits.data[i] = 0;
+		for (int dotIdx = 0; dotIdx < dots.size(); dotIdx++) {
+			DotVotingBooth booth = votingBooths.get(dotIdx);
+			if( booth.votes.size == 0 )
+				continue;
+			DotToLandmark best = booth.votes.get(0);
+			for (int i = 1; i < booth.votes.size; i++) {
+				DotToLandmark b = booth.votes.get(i);
+				if( b.count > best.count ) {
+					best = b;
 				}
 			}
-			if( totalValid > 0 ) {
-				output.add(foundDoc);
+
+			FoundDocument doc = foundMap.get(best.documentID);
+			if( doc == null ){
+				doc = resultsStorage.grow();
+				doc.init(documents.get(best.documentID));
+				foundMap.put(best.documentID,doc);
+			}
+
+			if( doc.landmarkHits.get(best.landmarkID) < best.count ) {
+				doc.landmarkHits.set(best.landmarkID,best.count);
+				doc.landmarkToDots.set(best.landmarkID, dotIdx);
+			}
+		}
+
+		foundMap.forEachEntry((docID,doc)->{
+			if( doc.countSeenLandmarks() >= 8 ) {
+				output.add(doc);
 			}
 			return true;
 		});
@@ -332,9 +346,11 @@ public class LlahOperations {
 	/**
 	 * Computes the feature for the set of points and see if they match anything in the dictionary. If they do vote.
 	 */
-	private void lookupProcessor(TIntObjectHashMap<FoundDocument> output,
-								 LlahFeature featureComputed, List<Point2D_F64> pointSet, int dotIdx)
+	private void lookupProcessor( List<Point2D_F64> pointSet, int dotIdx, LlahFeature featureComputed,
+								  FastQueue<DotVotingBooth> votingBooths )
 	{
+		DotVotingBooth booth = votingBooths.get(dotIdx);
+
 		// Compute the feature for this set
 		hasher.computeHash(pointSet,featureComputed);
 
@@ -342,39 +358,12 @@ public class LlahOperations {
 		LlahFeature foundFeat = hashTable.lookup(featureComputed.hashCode);
 		while( foundFeat != null ) {
 			// Condition 1: See if the invariant's match
-			if( !featureComputed.doInvariantsMatch(foundFeat) ) {
-				foundFeat = foundFeat.next;
-				continue;
+			if( featureComputed.doInvariantsMatch(foundFeat) ) {
+				DotToLandmark vote = booth.lookup(foundFeat.documentID, foundFeat.landmarkID);
+				vote.count += 1;
 			}
-
-			// Condition 2: Make sure this known feature hasn't already been counted
-			// IGNORING THIS CONDITION! shuffle unit test failed with it
-
-			// get results for this document
-			FoundDocument results = output.get(foundFeat.documentID);
-			if( results == null ) {
-				results = resultsStorage.grow();
-				results.init(documents.get(foundFeat.documentID));
-				output.put(foundFeat.documentID,results);
-			}
-
-			// note which dot referenced this landmark
-			TIntObjectHashMap<DotCount> dots = results.landmarkToDots.get(foundFeat.landmarkID);
-			DotCount d2l = dots.get(dotIdx);
-			if( d2l == null ) {
-				d2l = storageD2L.grow();
-				d2l.reset();
-				d2l.dotIdx = dotIdx;
-				dots.put(dotIdx,d2l);
-			}
-			d2l.counts++;
-
-			// note which point matched this document
-			results.landmarkHits.data[foundFeat.landmarkID]++;
 
 			foundFeat = foundFeat.next;
-			// Condition 3: Abort after a match was found to ensure featureComputed is only matched once
-			// IGNORING THIS CONDITION! Caused unit tests to fail
 		}
 	}
 
@@ -384,6 +373,42 @@ public class LlahOperations {
 	interface ProcessPermutation
 	{
 		void process( int dotIdx, List<Point2D_F64> points );
+	}
+
+	public static class DotVotingBooth {
+		final FastQueue<DotToLandmark> votes = new FastQueue<>(DotToLandmark::new);
+		final TIntObjectHashMap<TIntObjectHashMap<DotToLandmark>> map = new TIntObjectHashMap<>();
+
+		public void reset() {
+			votes.reset();
+			map.clear();
+		}
+
+		public DotToLandmark lookup( int documentID , int landmarkID ) {
+			TIntObjectHashMap<DotToLandmark> voteDoc = map.get(documentID);
+
+			if( voteDoc == null ) {
+				voteDoc = new TIntObjectHashMap<>();
+				map.put(documentID, voteDoc);
+			}
+
+			DotToLandmark vote = voteDoc.get(landmarkID);
+			if( vote == null ) {
+				vote = votes.grow();
+				vote.documentID = documentID;
+				vote.landmarkID = landmarkID;
+				vote.count = 0;
+				voteDoc.put(landmarkID,vote);
+			}
+
+			return vote;
+		}
+	}
+
+	public static class DotToLandmark {
+		public int documentID;
+		public int landmarkID;
+		public int count;
 	}
 
 	/**
@@ -418,22 +443,17 @@ public class LlahOperations {
 		 * Indicates the number of times a particular point was matched
 		 */
 		public final GrowQueue_I32 landmarkHits = new GrowQueue_I32();
-		/**
-		 * Used to see which dots have been matched to this document and how often
-		 */
-		public final FastQueue<TIntObjectHashMap<DotCount>> landmarkToDots =
-				new FastQueue<>(TIntObjectHashMap::new);
+
+		public final GrowQueue_I32 landmarkToDots = new GrowQueue_I32();
+
 
 		public void init( LlahDocument document) {
 			this.document = document;
 			final int totalLandmarks = document.landmarks.size;
 			landmarkHits.resize(totalLandmarks);
 			landmarkHits.fill(0);
-
 			landmarkToDots.resize(totalLandmarks);
-			for (int i = 0; i < totalLandmarks; i++) {
-				landmarkToDots.get(i).clear();
-			}
+			landmarkToDots.fill(-1);
 		}
 
 		public boolean seenLandmark( int which ) {
@@ -466,18 +486,5 @@ public class LlahOperations {
 			}
 			return total;
 		}
-
-		public int[] landmarkToMostSeenDotCount() {
-			int[] counts = new int[landmarkHits.size];
-			for (int i = 0; i < counts.length; i++) {
-				int maxCount = 0;
-				for( var e : landmarkToDots.get(i).valueCollection() ) {
-					maxCount = Math.max(maxCount, e.counts);
-				}
-				counts[i] = maxCount;
-			}
-			return counts;
-		}
 	}
-
 }
