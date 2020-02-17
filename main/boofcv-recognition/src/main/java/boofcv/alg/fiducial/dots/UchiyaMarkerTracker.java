@@ -18,13 +18,9 @@
 
 package boofcv.alg.fiducial.dots;
 
-import boofcv.abst.filter.binary.InputToBinary;
 import boofcv.alg.feature.describe.llah.LlahDocument;
 import boofcv.alg.feature.describe.llah.LlahOperations;
-import boofcv.alg.shapes.ellipse.BinaryEllipseDetectorPixel;
 import boofcv.struct.geo.AssociatedPair;
-import boofcv.struct.image.GrayU8;
-import boofcv.struct.image.ImageBase;
 import georegression.struct.homography.Homography2D_F64;
 import georegression.struct.point.Point2D_F64;
 import georegression.transform.homography.HomographyPointOps_F64;
@@ -55,14 +51,8 @@ import java.util.List;
  *
  * @author Peter Abeles
  */
-public class UchiyaMarkerTracker<T extends ImageBase<T>> {
+public class UchiyaMarkerTracker {
 
-	// Storage the input image after it has been converted into a binary image
-	@Getter GrayU8 binary = new GrayU8(1,1);
-
-	// Used to find ellipses in the image
-	@Getter InputToBinary<T> inputToBinary;
-	@Getter BinaryEllipseDetectorPixel ellipseDetector;
 	// Stores the "global" dictionary of documents
 	@Getter LlahOperations llahOps;
 
@@ -76,8 +66,6 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	/** Print tracking and debugging messages */
 	private @Getter @Setter PrintStream verbose = null;
 
-	// Storage for the centers of observed ellipses
-	List<Point2D_F64> detectedPoints = new ArrayList<>();
 	// Storage for documents which have been lookd up
 	List<LlahOperations.FoundDocument> foundDocs = new ArrayList<>();
 
@@ -93,16 +81,13 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	// Used to compute homography
 	Ransac<Homography2D_F64, AssociatedPair> ransac;
 	FastQueue<AssociatedPair> ransacPairs = new FastQueue<>(AssociatedPair::new); // landmark -> dots
+	LlahOperations.DotCount bestDot; // used to keep track of which dot had the most counts for the landmark
 
 	/**
 	 * Configures the tracker
 	 */
-	public UchiyaMarkerTracker(InputToBinary<T> inputToBinary,
-							   BinaryEllipseDetectorPixel ellipseDetector,
-							   LlahOperations llahOps,
+	public UchiyaMarkerTracker(LlahOperations llahOps,
 							   Ransac<Homography2D_F64, AssociatedPair> ransac) {
-		this.inputToBinary = inputToBinary;
-		this.ellipseDetector = ellipseDetector;
 		this.llahOps = llahOps;
 		this.ransac = ransac;
 
@@ -112,48 +97,31 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 	/**
 	 * Resets the track into its original state
 	 */
-	public void reset() {
+	public void resetTracking() {
 		llahTrackingOps.clearDocuments();
 		trackId_to_globalId.clear();
+		globalId_to_track.clear();
+		ransac.reset();
 	}
 
 	/**
 	 * Detects and tracks dot patterns.
-	 * @param input Input image. Not modifid.
+	 * @param detectedDots Input image. Not modified.
 	 */
-	public void process( T input ) {
-		inputToBinary.process(input,binary);
-		ellipseDetector.process(binary);
-		List<BinaryEllipseDetectorPixel.Found> foundEllipses = ellipseDetector.getFound();
+	public void process(List<Point2D_F64> detectedDots ) {
+		// Reset the tracker
+		currentTracks.reset();
+		globalId_to_track.clear();
 
-		// Convert ellipses to points that LLAH understands
-		detectedPoints.clear();
-		for (int i = 0; i < foundEllipses.size(); i++) {
-			// NOTE: These centers will not be the geometric centers. The geometric center could be found using
-			//       tangent points and this would make it more accurate. Not sure it's worth the effort...
-			detectedPoints.add(foundEllipses.get(i).ellipse.center);
-		}
-
-		if( verbose != null ) verbose.println("Uchiya detected dots total "+detectedPoints.size());
-
-		performTracking(detectedPoints);
-		performDetection(detectedPoints);
+		performTracking(detectedDots);
+		performDetection(detectedDots);
 		setTrackDescriptionsAndID();
-
-		// System.out.println("Found documents "+foundDocs.size());
-//		for( var r : foundDocs ) {
-//			System.out.println("Doc #"+r.document.documentID+" matched = "+r.countMatches()+" / "+r.document.landmarks.size);
-//		}
 	}
 
 	/**
 	 * Detects landmarks using their tracking definition.
 	 */
 	void performTracking( List<Point2D_F64> observations ) {
-		// Discard the old tracks
-		currentTracks.reset();
-		globalId_to_track.clear();
-
 		// See if any previously tracked markers are visible
 		llahTrackingOps.lookupDocuments(observations, landmarkThreshold, foundDocs);
 
@@ -190,8 +158,8 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 
 			Track track = currentTracks.grow();
 			track.reset();
+			track.globalDoc = foundDoc.document;
 			if( fitHomographAndPredict(observations,foundDoc,track) ) {
-				track.globalDoc = foundDoc.document;
 				globalId_to_track.put(track.globalDoc.documentID,track);
 				if( verbose != null ) verbose.println(" detected doc "+track.globalDoc.documentID);
 			} else {
@@ -209,6 +177,9 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 		trackId_to_globalId.clear();
 		globalId_to_track.forEachEntry((globalID, track)-> {
 			track.trackDoc = llahTrackingOps.createDocument(track.predicted.toList());
+			// copy global landmarks into track so that in the next iteration the homography will be correct
+			track.trackDoc.landmarks.reset();
+			track.trackDoc.landmarks.copyAll(track.globalDoc.landmarks.toList(),(src,dst)->dst.set(src));
 			trackId_to_globalId.put(track.trackDoc.documentID,globalID);
 			return true;
 		});
@@ -251,13 +222,20 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 		ransacPairs.reset();
 		for (int landmarkIdx = 0; landmarkIdx < observed.document.landmarks.size; landmarkIdx++) {
 			final Point2D_F64 landmark = observed.document.landmarks.get(landmarkIdx);
+			bestDot = null;
 			TIntObjectHashMap<LlahOperations.DotCount> dotToLandmark = observed.landmarkToDots.get(landmarkIdx);
 			dotToLandmark.forEachEntry((key,dotCount)-> {
-				if( dotCount.counts >= minDotHits) {
-					ransacPairs.grow().set(landmark,dots.get(dotCount.dotIdx));
+				if( bestDot == null || dotCount.counts > bestDot.counts) {
+					bestDot = dotCount;
 				}
-				return true; // multiple matches to this landmark can be found
+//				System.out.println("   landmark "+moo+" dot "+dotCount.dotIdx+"  count "+dotCount.counts);
+				return true;
 			});
+
+			if( bestDot != null && bestDot.counts >= minDotHits ) {
+//				System.out.println("selected landmark "+landmarkIdx+"  count "+bestDot.counts);
+				ransacPairs.grow().set(landmark,dots.get(bestDot.dotIdx));
+			}
 		}
 		if( ransacPairs.size < ransac.getMinimumSize() )
 			return false;
@@ -281,8 +259,8 @@ public class UchiyaMarkerTracker<T extends ImageBase<T>> {
 
 		/** Resets to initial state */
 		public void reset() {
-			trackDoc=null;
-			globalDoc =null;
+			trackDoc  = null;
+			globalDoc = null;
 			predicted.reset();
 			doc_to_imagePixel.reset();
 		}

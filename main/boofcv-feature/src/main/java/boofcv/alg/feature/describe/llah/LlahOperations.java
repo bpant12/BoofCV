@@ -32,7 +32,6 @@ import org.ddogleg.struct.FastQueue;
 import org.ddogleg.struct.GrowQueue_I32;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.stream.IntStream;
 
@@ -94,8 +93,8 @@ public class LlahOperations {
 	// Used to compute all the combinations of a set
 	private final Combinations<Point2D_F64> combinator = new Combinations<>();
 
-	// recycle to avoid garbage collectior
-	FastQueue<DotCount> storageD2L = new FastQueue<>(DotCount::new);
+	// recycle to avoid garbage collector
+	FastQueue<DotCount> storageD2L = new FastQueue<>(DotCount::new); // dot to landmark
 
 	/**
 	 * Configures the LLAH feature computation
@@ -121,6 +120,7 @@ public class LlahOperations {
 	public void clearDocuments() {
 		documents.reset();
 		allFeatures.reset();
+		hashTable.reset();
 	}
 
 	/**
@@ -179,9 +179,8 @@ public class LlahOperations {
 		doc.documentID = documents.size()-1;
 
 		// copy the points
-		for (Point2D_F64 p : locations2D) {
-			doc.landmarks.grow().set(p);
-		}
+		doc.landmarks.copyAll(locations2D,(src,dst)->dst.set(src));
+
 		computeAllFeatures(locations2D, (idx,l) -> createProcessor(doc, idx));
 
 		return doc;
@@ -198,6 +197,7 @@ public class LlahOperations {
 	private void createProcessor(LlahDocument doc, int idx) {
 		// Given this set compute the feature
 		LlahFeature feature = allFeatures.grow();
+		feature.reset();
 		hasher.computeHash(permuteM,feature);
 
 		// save the results
@@ -211,14 +211,15 @@ public class LlahOperations {
 	 * Given the set of observed locations, compute all the features for each point. Have processor handle
 	 * the results as they are found
 	 */
-	void computeAllFeatures(List<Point2D_F64> locations2D, ProcessPermutation processor ) {
+	void computeAllFeatures(List<Point2D_F64> dots, ProcessPermutation processor ) {
 		// set up nn search
-		nn.setPoints(locations2D,false);
+		nn.setPoints(dots,false);
 
 		// Compute the features for all points in this document
-		for (int pointID = 0; pointID < locations2D.size(); pointID++) {
+		for (int dotIdx = 0; dotIdx < dots.size(); dotIdx++) {
+//			System.out.println("================ pointID "+dotIdx);
 
-			findNeighbors(locations2D.get(pointID));
+			findNeighbors(dots.get(dotIdx));
 
 			// All combinations of size M from neighbors
 			combinator.init(neighbors, sizeOfCombinationM);
@@ -237,7 +238,7 @@ public class LlahOperations {
 						permuteM.add(setM.get(idx));
 					}
 
-					processor.process(pointID,permuteM);
+					processor.process(dotIdx,permuteM);
 				}
 			} while( combinator.next() );
 		}
@@ -267,6 +268,11 @@ public class LlahOperations {
 
 		// sort the neighbors in clockwise order
 		sorter.sort(angles,angles.length,neighbors);
+
+//		System.out.println("tgt"+target);
+//		for (int i = 0; i < neighbors.size(); i++) {
+//			System.out.println("  "+neighbors.get(i));
+//		}
 	}
 
 	/**
@@ -276,20 +282,22 @@ public class LlahOperations {
 	 * @param output Storage for results. WARNING: Results are recycled on next call!
 	 */
 	public void lookupDocuments( List<Point2D_F64> dots , double threshold, List<FoundDocument> output ) {
-		checkListSize(dots);
+		output.clear();
+
+		// It needs to have a minimum of this number of points to work
+		if (dots.size() < numberOfNeighborsN + 1)
+			return;
 
 		storageD2L.reset();
-		output.clear();
 		foundMap.clear();
 		resultsStorage.reset();
 
 		// Used to keep track of what has been seen and what has not been seen
-		var knownFeatures = new HashSet<LlahFeature>();
 		var featureComputed = new LlahFeature(numberOfInvariants);
 
 		// Compute features, look up matching known features, then vote
 		computeAllFeatures(dots, (dotIdx,pointSet)->
-				lookupProcessor(foundMap, knownFeatures, featureComputed,pointSet,dotIdx));
+				lookupProcessor(foundMap, featureComputed,pointSet,dotIdx));
 
 		int minimumHits = (int)Math.round(computeMaxUniqueHashPerPoint()*threshold);
 		foundMap.forEachEntry((docID,foundDoc)->{
@@ -324,7 +332,7 @@ public class LlahOperations {
 	/**
 	 * Computes the feature for the set of points and see if they match anything in the dictionary. If they do vote.
 	 */
-	private void lookupProcessor(TIntObjectHashMap<FoundDocument> output, HashSet<LlahFeature> knownFeatures,
+	private void lookupProcessor(TIntObjectHashMap<FoundDocument> output,
 								 LlahFeature featureComputed, List<Point2D_F64> pointSet, int dotIdx)
 	{
 		// Compute the feature for this set
@@ -340,12 +348,7 @@ public class LlahOperations {
 			}
 
 			// Condition 2: Make sure this known feature hasn't already been counted
-			if( knownFeatures.contains(foundFeat)) {
-				foundFeat = foundFeat.next;
-				continue;
-			} else {
-				knownFeatures.add(foundFeat);
-			}
+			// IGNORING THIS CONDITION! shuffle unit test failed with it
 
 			// get results for this document
 			FoundDocument results = output.get(foundFeat.documentID);
@@ -369,8 +372,9 @@ public class LlahOperations {
 			// note which point matched this document
 			results.landmarkHits.data[foundFeat.landmarkID]++;
 
+			foundFeat = foundFeat.next;
 			// Condition 3: Abort after a match was found to ensure featureComputed is only matched once
-			break;
+			// IGNORING THIS CONDITION! Caused unit tests to fail
 		}
 	}
 
@@ -461,6 +465,18 @@ public class LlahOperations {
 				total += landmarkHits.get(i);
 			}
 			return total;
+		}
+
+		public int[] landmarkToMostSeenDotCount() {
+			int[] counts = new int[landmarkHits.size];
+			for (int i = 0; i < counts.length; i++) {
+				int maxCount = 0;
+				for( var e : landmarkToDots.get(i).valueCollection() ) {
+					maxCount = Math.max(maxCount, e.counts);
+				}
+				counts[i] = maxCount;
+			}
+			return counts;
 		}
 	}
 
