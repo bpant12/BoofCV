@@ -52,15 +52,15 @@ implements FiducialTracker<T>
 	@Getter UchiyaMarkerImageTracker<T> tracker;
 
 	// Storage
-	FastQueue<PointIndex2D_F64> controlPoints = new FastQueue<>(PointIndex2D_F64::new);
-	FastQueue<Point2D3D> control3D = new FastQueue<>(Point2D3D::new);
+	final FastQueue<Point2D3D> control3D = new FastQueue<>(Point2D3D::new);
 
 	// Compute and save the radius of each document
-	TIntDoubleHashMap docToRadius = new TIntDoubleHashMap();
+	final TIntDoubleHashMap docToRadius = new TIntDoubleHashMap();
 
 	// Local work space
-	Point2D_F64 center = new Point2D_F64();
-	Rectangle2D_F64 rectangle = new Rectangle2D_F64();
+	final Point2D_F64 center = new Point2D_F64();
+	final Rectangle2D_F64 rectangle = new Rectangle2D_F64();
+	final Point2D_F64 norm = new Point2D_F64();
 
 	public Uchiya_to_FiducialDetector(UchiyaMarkerImageTracker<T> tracker, ImageType<T> imageType ) {
 		this.tracker = tracker;
@@ -159,29 +159,21 @@ implements FiducialTracker<T>
 	@Override
 	public List<PointIndex2D_F64> getDetectedControl(int which) {
 		UchiyaMarkerTracker.Track track = tracker.getTracks().get(which);
-		controlPoints.reset();
-		for (int idx = 0; idx < track.predicted.size; idx++) {
-			// TODO use actual observations
-			Point2D_F64 dot = track.predicted.get(idx);
-			controlPoints.grow().set(dot.x, dot.y, idx);
-		}
-		return controlPoints.toList();
+		return track.observed.toList();
 	}
 
 	@Override
 	protected List<Point2D3D> getControl3D(int which) {
 		UchiyaMarkerTracker.Track track = tracker.getTracks().get(which);
 		control3D.reset();
-		Point2D_F64 norm = new Point2D_F64();
-		for (int idx = 0; idx < track.globalDoc.landmarks.size; idx++) {
-			// TODO use actual observations
-			Point2D_F64 dot = track.predicted.get(idx);
-			Point2D_F64 landmark = track.globalDoc.landmarks.get(idx);
 
+		for (int dotIdx = 0; dotIdx < track.observed.size; dotIdx++) {
+			PointIndex2D_F64 dot = track.observed.get(dotIdx);
+			Point2D_F64 landmark = track.globalDoc.landmarks.get(dot.index);
 			pixelToNorm.compute(dot.x,dot.y, norm);
-
 			control3D.grow().set(norm.x,norm.y,landmark.x,landmark.y,0);
 		}
+
 		return control3D.toList();
 	}
 

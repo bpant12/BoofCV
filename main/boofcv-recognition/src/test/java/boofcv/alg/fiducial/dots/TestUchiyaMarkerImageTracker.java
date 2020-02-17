@@ -22,6 +22,7 @@ import boofcv.abst.distort.FDistort;
 import boofcv.alg.distort.impl.DistortSupport;
 import boofcv.alg.shapes.ellipse.BinaryEllipseDetectorPixel;
 import boofcv.factory.filter.binary.FactoryThresholdBinary;
+import boofcv.struct.geo.PointIndex2D_F64;
 import boofcv.struct.image.GrayU8;
 import boofcv.testing.BoofTesting;
 import georegression.struct.ConvertFloatType;
@@ -33,11 +34,11 @@ import org.ddogleg.struct.FastQueue;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author Peter Abeles
@@ -87,7 +88,7 @@ class TestUchiyaMarkerImageTracker {
 			// There should be one detected dot for each true dot. They should also be close to each other
 			List<Point2D_F64> foundCenters = trackerImage.getFoundDots();
 			assertEquals(centers.size(),foundCenters.size());
-			compareDots(centers, foundCenters, angle, rotated.width, rotated.height);
+			compareDots(centers, foundCenters, angle, rotated.width, rotated.height, 1.0);
 
 			// Sanity check. This is an easy situation
 			assertEquals(20, tracker.ransac.getMatchSet().size());
@@ -100,29 +101,15 @@ class TestUchiyaMarkerImageTracker {
 			assertEquals(targetID,track.globalDoc.documentID);
 
 			// Check extracted points to see if they are at the expected location
-			compareDots(centers, track.predicted.toList(), angle, rotated.width, rotated.height);
+			compareDots(centers, track.predicted.toList(), angle, rotated.width, rotated.height, 2.0);
+			compareDotsIdx(centers, track.observed.toList(), angle, rotated.width, rotated.height, 1.0);
 
 //			ShowImages.showBlocking(rotated,"Rotating", 1_000);
 		}
 	}
 
-	private List<Point2D_F64> rotate( List<Point2D_F64> src , double yaw , int width , int height) {
-		Affine2D_F32 affine32 = DistortSupport.rotateCenterAffine(width/2,height/2,width/2,height/2, (float)yaw);
-		Affine2D_F64 affine = ConvertFloatType.convert(affine32,null);
-
-		var dst = new ArrayList<Point2D_F64>();
-		for (int i = 0; i < src.size(); i++) {
-			Point2D_F64 s = src.get(i);
-			Point2D_F64 d = new Point2D_F64();
-			AffinePointOps_F64.transform(affine, s.x, s.y, d);
-			dst.add(d);
-		}
-		Collections.shuffle(dst);
-		return dst;
-	}
-
 	private void compareDots(List<Point2D_F64> expected, List<Point2D_F64> found,
-							 double angle , int width , int height )
+							 double angle , int width , int height , double tol )
 	{
 		Affine2D_F32 affine32 = DistortSupport.rotateCenterAffine(width/2,height/2,width/2,height/2, (float)angle);
 		Affine2D_F64 affine = ConvertFloatType.convert(affine32,null);
@@ -139,7 +126,21 @@ class TestUchiyaMarkerImageTracker {
 					bestDistance = d;
 				}
 			}
-			assertEquals(0,bestDistance,1.5);
+			assertEquals(0,bestDistance,tol);
+		}
+	}
+
+	private void compareDotsIdx(List<Point2D_F64> expected, List<PointIndex2D_F64> found,
+								double angle , int width , int height , double tol )
+	{
+		Affine2D_F32 affine32 = DistortSupport.rotateCenterAffine(width/2,height/2,width/2,height/2, (float)angle);
+		Affine2D_F64 affine = ConvertFloatType.convert(affine32,null);
+
+		Point2D_F64 adj = new Point2D_F64();
+		for( var f : found ) {
+			AffinePointOps_F64.transform(affine,f.x,f.y,adj);
+			Point2D_F64 e = expected.get(f.index);
+			assertTrue(e.distance(adj) <= tol );
 		}
 	}
 }

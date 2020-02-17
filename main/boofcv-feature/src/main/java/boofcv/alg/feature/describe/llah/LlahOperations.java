@@ -278,10 +278,10 @@ public class LlahOperations {
 	/**
 	 * Looks up all the documents which match observed features.
 	 * @param dots Observed feature locations
-	 * @param threshold A threshold from 0 to 1, inclusive. 0 = everything passes. 1 = reject everything
+	 * @param minLandmarks Minimum number of landmarks that are assigned to a document for it to be accepted
 	 * @param output Storage for results. WARNING: Results are recycled on next call!
 	 */
-	public void lookupDocuments( List<Point2D_F64> dots , double threshold, List<FoundDocument> output ) {
+	public void lookupDocuments( List<Point2D_F64> dots , int minLandmarks, List<FoundDocument> output ) {
 		output.clear();
 
 		// It needs to have a minimum of this number of points to work
@@ -328,11 +328,21 @@ public class LlahOperations {
 		}
 
 		foundMap.forEachEntry((docID,doc)->{
-			if( doc.countSeenLandmarks() >= 8 ) {
+			if( doc.countSeenLandmarks() >= minLandmarks ) {
 				output.add(doc);
 			}
 			return true;
 		});
+	}
+
+	/**
+	 * Place holder function for the document retrieval in the LLAH paper. Just throws an exception for now.
+	 * @param dots observed dots
+	 * @param output storage for found document
+	 * @return true if successful
+	 */
+	public boolean lookupocument( List<Point2D_F64> dots , FoundDocument output ) {
+		throw new RuntimeException("Implement");
 	}
 
 	/**

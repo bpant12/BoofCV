@@ -19,6 +19,9 @@
 package boofcv.abst.fiducial;
 
 import boofcv.struct.image.ImageBase;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * @author Peter Abeles
@@ -29,5 +32,10 @@ public abstract class GenericFiducialTrackerChecks extends GenericFiducialDetect
 	protected void detect(FiducialDetector detector, ImageBase image) {
 		((FiducialTracker)detector).reset();
 		detector.detect(image);
+	}
+
+	@Test
+	void checkTracking() {
+		fail("Implement");
 	}
 }
