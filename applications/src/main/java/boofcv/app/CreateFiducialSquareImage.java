@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2019, Peter Abeles. All Rights Reserved.
+ * Copyright (c) 2011-2020, Peter Abeles. All Rights Reserved.
  *
  * This file is part of BoofCV (http://boofcv.org).
  *
@@ -37,7 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Outputs an EPS document describing a binary square fiducial that encodes the specified number
+ * Outputs an PDF document describing a binary square fiducial that encodes the specified number
  *
  * @author Peter Abeles
  */
